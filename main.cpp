@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "config.hpp"
+#include "serial.hpp"
 #include "udp.hpp"
 
 namespace
@@ -16,6 +17,51 @@ void print_prompt()
 {
     std::cout << "Enter message: ";
 }
+
+using namespace multicast;
+
+class Client
+{
+public:
+    virtual bool send(std::string_view) const
+    {
+        return false;
+    }
+};
+
+using Clients = std::vector<std::unique_ptr<Client>>;
+
+class ClientUdp : public Client
+{
+    const udp::Socket* socket_;
+    const sockaddr_in address_;
+
+public:
+    ClientUdp(const udp::Socket* socket, const sockaddr_in& address)
+        : socket_(socket), address_(address)
+    {
+    }
+
+    bool send(std::string_view message) const override
+    {
+        return udp::send(*socket_, address_, message);
+    }
+};
+
+class ClientSerial : public Client
+{
+    const serial::Device device_;
+
+public:
+    ClientSerial(std::string_view device) : device_(serial::Device(device))
+    {
+    }
+
+    bool send(std::string_view message) const override
+    {
+        return serial::send(device_, message);
+    }
+};
 
 } // namespace
 
@@ -39,24 +85,30 @@ int main(int argc, char* argv[])
         using namespace multicast;
         Config config{argv[1]};
         udp::Socket socket{};
+        Clients clients{};
 
         for ([[maybe_unused]] const auto& entry : config.GetUdpEntries())
         {
-            // TODO: добавьте клиента (используйте объект socket)
+            clients.push_back(
+                std::make_unique<ClientUdp>(&socket, entry.address));
         }
 
         for ([[maybe_unused]] const auto& entry : config.GetSerialEntries())
         {
-            // TODO: добавьте клиента (для каждого клиента создавайте
-            // новые объекты serial::Device)
+            clients.push_back(std::make_unique<ClientSerial>(entry.device));
         }
 
         std::string input{};
         while (print_prompt(), std::getline(std::cin, input))
         {
             input.push_back('\n');
-
-            // TODO: отправьте всем клиентам
+            for (const auto& client : clients)
+            {
+                if (!client->send(input))
+                {
+                    client->send(input);
+                }
+            }
         }
         return EXIT_SUCCESS;
     }
